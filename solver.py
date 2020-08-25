@@ -272,7 +272,7 @@ class Solver():
         H_rep = np.vstack((H_rep,np.hstack((-lower_bound,A))))
         min_volume = np.prod(in_rectangle[:,1] - in_rectangle[:,0])
         ret,min_phase = infeas_relus[0]
-
+    
         for relu_idx,_ in infeas_relus:
         # for relu_idx in infeas_relus:
             for phase in [0,1]:

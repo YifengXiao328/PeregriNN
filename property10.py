@@ -116,12 +116,16 @@ if __name__ == "__main__":
             
         except TimeOutException as e:
             results.append("Timeout") 
+            d=[]
             for p in processes:
                 if(p.is_alive()):
                     pid = int(p.name.split('-')[-1]) - 1
                     print("Process",pid,'timed out with disparity', disparity[pid])
+                    d.append(disparity[pid])
                 p.terminate() 
             break
+            print(len(d))
+            print(d)
         
         for p in processes:
             p.terminate()

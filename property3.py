@@ -72,7 +72,7 @@ if __name__ == "__main__":
         upper_bounds = nnet.normalize_input(raw_upper_bounds)
         # sample_network(nn,lower_bounds,upper_bounds)
         input_bounds = np.concatenate((lower_bounds,upper_bounds),axis = 1)
-        problems = split_input_space(nnet,input_bounds,128)
+        problems = split_input_space(nnet,input_bounds,512)
         # problems = [input_bounds]
         print(len(problems),"subproblems")
         adv_found = Value('i',0)

@@ -73,6 +73,9 @@ if __name__ == "__main__":
         # sample_network(nn,lower_bounds,upper_bounds)
         input_bounds = np.concatenate((lower_bounds,upper_bounds),axis = 1)
         problems = split_input_space1(nnet,input_bounds,32)
+        disparity = []
+        for problem in problems:
+            disparity.append(sample_network(nnet,problem))
         # problems = [input_bounds]
         print(len(problems),"subproblems")
         adv_found = Value('i',0)
@@ -99,7 +102,8 @@ if __name__ == "__main__":
 
            
         except TimeOutException as e:
-            results.append("Timeout")  
+            results.append("Timeout")
+              
             
         for p in processes:
             p.terminate()
