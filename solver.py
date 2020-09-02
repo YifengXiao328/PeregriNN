@@ -9,6 +9,7 @@ from NeuralNetwork import *
 from copy import copy,deepcopy
 import re
 import cdd
+from poset import *
 eps = 1E-5
 
 class Solver():
@@ -44,10 +45,13 @@ class Solver():
         #Layer index 
         self.model.update()
         self.layer_start_idx = [0] * len(self.nn.layers)
+        self.layer_stats = np.zeros((self.nn.num_layers-1,2))
+
         idx = self.__input_dim
         for layer_idx, layer in self.nn.layers.items():
             if(layer_idx == 0):
                 continue
+            # self.layer_stats[layer_idx] = {'undecided':0, 'infeasible':0}
             self._2dabs[layer_idx] = {}
             self.layer_start_idx[layer_idx] = self.layer_start_idx[layer_idx-1] + self.nn.layers[layer_idx-1]['num_nodes']
             for neuron_idx in range(layer['num_nodes']):
@@ -183,6 +187,7 @@ class Solver():
 
                     paths = [1]
                     status = self.dfs(infeasible_relus,[],layers_masks,undecided_relus=copy(sorted(non_lin_relus)),paths = paths)
+                    # print(self.layer_stats[0])
                     # print(status)
                     # print('Paths:',paths)
 
@@ -303,14 +308,82 @@ class Solver():
                 except Exception as e:
                     pass
         return ret,min_phase
+    def get_effective_weights(self,W,b,layer):
+        W_ = self.nn.layers[1]['weights']
+        b_ = self.nn.layers[1]['bias']
+        net = np.array([self.model.getVarByName('n[%d]'%idx).X for idx in range(len(self.net_vars))])
+        phases = (net > 0).astype(int)
+        layer_phases = phases[self.nn.image_size:self.nn.image_size + self.nn.layers_sizes[1]]
+        for layer_idx in range(2,layer):
+            W_l  = self.nn.layers[layer_idx]['weights']
+            b_l  = self.nn.layers[layer_idx]['bias']
+            W_ = np.matmul(W_l,W_ *layer_phases.reshape((-1,1)))
+            b_ = W_l.dot(b_ * layer_phases.reshape((-1,1))) + b_l
+            layer_start = self.layer_start_idx[layer_idx]
+            layer_phases = phases[layer_start:layer_start + self.nn.layers_sizes[layer_idx]]
+        
+        W_ = np.matmul(W,W_ *layer_phases.reshape((-1,1)))
+        b_ = W.dot(b_ *layer_phases.reshape((-1,1))) + b
+        return W_,b_
+
+    def pick_one(self, infeasible_relus):
+        #Assume infeasible_relus are sorted
+        # try:
+        k = 5
+        slacks = np.array([self.model.getVarByName('s[%d]'%idx).X for idx in range(len(self.slack_vars))])
+        y = np.array([self.model.getVarByName('y[%d]'%idx).X for idx in range(len(self.relu_vars))])
+        x = np.array([self.model.getVarByName('x[%d]'%idx).X for idx in range(len(self.state_vars))]).reshape((-1,1))
+        # inactive_infeas =  np.where(net < 0)[0] 
+        slacks[y==0] = 0
+        layer_infeasible = []
+        min_layer,_ = self.abs2d[infeasible_relus[0][0]]
+        # min_layer += 1
+        for relu_idx,_ in infeasible_relus:
+            if(self.abs2d[relu_idx][0]  > min_layer):
+                break
+            layer_infeasible.append(relu_idx)
+        if(len(layer_infeasible) == 1):
+            return infeasible_relus[0][0], 1 - infeasible_relus[0][1]
+        layer_slacks = slacks[layer_infeasible]
+        top_k = np.argsort(layer_slacks)
+        top_k = top_k[-k:]
+        W = self.nn.layers[min_layer]['weights'][top_k]
+        b = self.nn.layers[min_layer]['bias'][top_k]
+        if(min_layer > 1):
+            W,b = self.get_effective_weights(W,b,min_layer)
+        c = W.dot(x) 
+        idxs = np.where(c > -b)[0]
+        W[idxs] = -W[idxs]
+        b[idxs] = -b[idxs]
+        # prev_layer_bounds = np.hstack((self.nn.layers[min_layer-1]['Relu_lb'],self.nn.layers[min_layer-1]['Relu_ub']))
+        poset = Poset(self.nn.input_bound,W,-b,x)
+        poset.build_poset()
+        if(len(poset.hashMap) < 2):
+            return None,None
+        compute_successors(poset.root)
+        successors = [child.num_successors for child in poset.root.children]
+        inverted_relu = poset.root.children[np.argmin(successors)].fixed_faces.pop()
+        min_idx = top_k[inverted_relu]
+        relu_idx = layer_infeasible[min_idx]
+        phase = 1
+        if(min_idx in idxs):
+            phase = 0
+        return relu_idx,phase
+        # except Exception as e:
+        #     print(e)
+        
 
     def dfs(self, infeasible_relus,fixed_relus,layers_masks, depth = 0,undecided_relus = [],paths = 0):
         #node to be handled
         status = 'UNKNOWN'
         # if(depth>self.MAX_DEPTH):
-        #     print("MAX depth")
+         #     print("MAX depth")
         #     return status
-        relu_idx,phase =  infeasible_relus[0]
+        relu_idx = None
+        relu_idx,phase = self.pick_one(infeasible_relus)
+        if(relu_idx is None):
+            # print('Used orig')
+            relu_idx,phase =  infeasible_relus[0]
         nonlin_relus = copy(undecided_relus)
         min_layer,_ = self.abs2d[nonlin_relus[0]]
         #relu_idx,phase = self.split_neuron(infeasible_relus,min_layer*52 +5)
@@ -329,6 +402,7 @@ class Solver():
         self.fix_relu(fixed_relus)
         self.model.optimize()
         if(self.model.Status != 3): #Feasible solution
+            self.layer_stats[layer_idx-1][0] +=  1
             SAT,infeasible_set = self.check_SAT()
             valid = self.check_potential_CE(np.array([self.model.getVarByName('x[%d]'%i).X for i in range(len(self.state_vars))]).reshape((-1,1)))
             if(SAT or valid):
@@ -336,6 +410,8 @@ class Solver():
                 status = 'SolFound'  
             else:
                 status = self.dfs(infeasible_set,copy(fixed_relus),layers_masks,depth+1,nonlin_relus,paths)
+        else:
+            self.layer_stats[layer_idx-1][1] += 1
         if(status != 'SolFound'):
             paths[0] += 1 
             # if(self.model.Status == 3):
@@ -352,6 +428,7 @@ class Solver():
             self.fix_relu(fixed_relus)
             self.model.optimize()
             if(self.model.Status != 3): #Feasible solution
+                self.layer_stats[layer_idx-1][0] += 1
                 SAT,infeasible_set = self.check_SAT()
                 valid = self.check_potential_CE(np.array([self.model.getVarByName('x[%d]'%i).X for i in range(len(self.state_vars))]).reshape((-1,1)))
                 if(SAT or valid):
@@ -361,11 +438,13 @@ class Solver():
                     status = self.dfs(infeasible_set,copy(fixed_relus),layers_masks,depth +1,nonlin_relus,paths)
             else:
                 status = 'UNSAT'
+                self.layer_stats[layer_idx-1][1] += 1
 
             #if(status != 'SolFound'):
             #    status = 'UNSAT'
         
             self.set_neuron_bounds(layer_idx,neuron_idx,-1,layers_masks)
+        
         return status
             
 
@@ -383,20 +462,7 @@ class Solver():
         slacks[inactive] = y[inactive]
         offset = 0
         infeas_relus=[]
-        # for layer_size in self.nn.layers_sizes[1:-1]:
-        #     active = active[active >= offset]
-        #     inactive = inactive[inactive >= offset]
-        #     layer_infeas = active[active < offset + layer_size]
-        #     layer_infeas = np.concatenate((layer_infeas,inactive[inactive < offset + layer_size]))
-        #     slack_infeas = slacks[layer_infeas]
-        #     order_infeas = np.flip(np.argsort(slack_infeas))
-        #     # order_infeas = np.argsort(slack_infeas)
-        #     layer_infeas = layer_infeas[order_infeas]
-        #     for neuron in layer_infeas:
-        #         infeas_relus.append((neuron+self.__input_dim,int(net[neuron] > eps)))
-        #     offset += layer_size
-    
-    
+       
         active = list(np.where(active_infeas == True)[0] + self.__input_dim)
         inactive = list(np.where(inactive_infeas == True)[0] + self.__input_dim)            
         infeas_relus = [(n_idx,0) for n_idx in inactive]
@@ -450,7 +516,7 @@ class Solver():
             ub[ub > 0] = 1
             weights += list(init_weight * ub)
             # weights += [1] * layer_size
-            init_weight *= 1000
+            init_weight *= 10000
 
         obj = LinExpr()
         if(fixed_relus):

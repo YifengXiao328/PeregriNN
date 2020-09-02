@@ -18,13 +18,19 @@ if __name__ == "__main__":
     lower_bounds = nnet.normalize_input(raw_lower_bounds)
     upper_bounds = nnet.normalize_input(raw_upper_bounds)
     input_bounds = np.concatenate((lower_bounds,upper_bounds),axis = 1)
+    
+
+
+
+
     W = nnet.layers[1]['weights']
     b = nnet.layers[1]['bias']
-    problems = split_input_space1(nnet,input_bounds,128)
+    problems = split_input_space(nnet,input_bounds,128)
     for input_bounds in problems:
-        dims=50
+        dims=5
         s = time()
         poset = Poset(input_bounds,W[:dims],b[:dims])
         poset.build_poset()
+        compute_successors(poset.root)
         print(time()-s,len(poset.hashMap))
     pass

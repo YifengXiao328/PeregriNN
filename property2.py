@@ -64,7 +64,7 @@ if __name__ == "__main__":
     # networks = [networks[-1]]
     raw_lower_bounds = np.array([55947.691, -3.141592, -3.141592, 1145, 0]).reshape((-1,1))
     raw_upper_bounds = np.array([62000, 3.141592, 3.141592, 1200, 60]).reshape((-1,1))
-    for network in networks:
+    for network in networks[1:2]:
         print("Checking property 2 on %s"%network[5:])
         nnet = NeuralNetworkStruct()
         nnet.parse_network(network)
@@ -82,12 +82,13 @@ if __name__ == "__main__":
             for input_bounds in problems:
                 nn = deepcopy(nnet)
                 # input_bounds = problems[k]
-                p = Process(target=run_instance, args=(nn, input_bounds, check_potential_CE,adv_found))
-                p.start()
-                processes.append(p)
+                run_instance(nn, input_bounds, check_potential_CE,adv_found)
+                # p = Process(target=run_instance, args=(nn, input_bounds, check_potential_CE,adv_found))
+            #     p.start()
+            #     processes.append(p)
                     
-            while(any(p.is_alive() for p in processes) and adv_found.value == 0):
-                pass
+            # while(any(p.is_alive() for p in processes) and adv_found.value == 0):
+            #     pass
             if(adv_found.value == 1):
                 print("Adv found")
                 unsafe +=1
